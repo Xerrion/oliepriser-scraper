@@ -4,3 +4,6 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+rayon = "1.10.0"
+reqwest = "0.12.7"
+tokio = "1.40.0"
