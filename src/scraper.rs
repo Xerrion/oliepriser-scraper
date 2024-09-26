@@ -74,19 +74,15 @@ impl Scraper {
             "start_time": self.run_start,
             "end_time": self.run_end.unwrap_or(now),
         });
-
-        self.client
-            .post(format!("{}/scraping_runs", self.base_url))
-            .json(&json_body)
-            .send()
-            .await?;
+        let url = Url::parse(&format!("{}/scraping_runs", self.base_url)).unwrap();
+        self.client.post(url).json(&json_body).send().await?;
         Ok(())
     }
-
     async fn fetch_providers(&self) -> Result<Vec<Providers>, Error> {
+        let url = Url::parse(&format!("{}/scraping_runs/providers", self.base_url)).unwrap();
         let response = self
             .client
-            .get(format!("{}/scraping_runs/providers", self.base_url))
+            .get(url)
             .send()
             .await
             .map_err(|e| Error::new(ErrorKind::Other, e))?;
@@ -96,9 +92,6 @@ impl Scraper {
             .text()
             .await
             .map_err(|e| Error::new(ErrorKind::Other, e))?;
-
-        log::info!("Response Status: {}", status);
-        log::info!("Response Body: {}", body);
 
         if status.is_success() {
             let providers = serde_json::from_str::<Vec<Providers>>(&body)?;
@@ -119,23 +112,20 @@ impl Scraper {
         ))
         .unwrap();
         let json_price = json!({ "price": price });
-
         let response = self.client.post(url).json(&json_price).send().await?;
         let status = response.status();
 
         if response.status().is_success() {
             let body = response.text().await?;
-            log::info!("Added price for provider {}: {}", provider_id, body);
+            println!("Added price for provider {}: {}", provider_id, body);
         } else {
             let body = response
                 .text()
                 .await
                 .unwrap_or_else(|_| "No response body".to_string());
-            log::error!(
+            eprintln!(
                 "Failed to add price for provider {}: {} {}",
-                provider_id,
-                status,
-                body
+                provider_id, status, body
             );
         }
         Ok(())
@@ -163,7 +153,7 @@ impl Scraper {
 
             let self_arc_clone = Arc::clone(&self_arc); // Clone Arc for usage in the async block
             async move {
-                let provider = self.get_provider(&provider, &client).await?;
+                let provider = self.get_provider(provider, &client).await?;
                 println!("Scraping provider: {}", provider.name);
 
                 let selector = Selector::parse(&provider.html_element).unwrap();
@@ -192,7 +182,7 @@ impl Scraper {
 
     async fn get_provider(
         &self,
-        provider: &&Providers,
+        provider: &Providers,
         client: &Client,
     ) -> Result<Provider, reqwest::Error> {
         let provider = client
