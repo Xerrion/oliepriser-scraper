@@ -9,11 +9,7 @@ use serde_json::json;
 use std::io::{Error, ErrorKind};
 use std::sync::Arc;
 
-#[derive(Deserialize, Serialize, Clone, Debug)]
-struct Token {
-    access_token: String,
-    token_type: String,
-}
+use crate::credentials::{Credentials, Token};
 
 #[derive(Deserialize, Serialize, Clone, Debug)]
 pub(crate) struct Providers {
@@ -28,28 +24,20 @@ pub(crate) struct Provider {
     html_element: String,
 }
 
-pub(crate) struct Credentials {
-    pub(crate) client_id: String,
-    pub(crate) client_secret: String,
-    token: Token,
-}
-
-impl Credentials {
-    pub(crate) fn new(client_id: String, client_secret: String) -> Self {
-        Self {
-            client_id,
-            client_secret,
-            token: Token {
-                access_token: "".to_string(),
-                token_type: "".to_string(),
-            },
-        }
-    }
-}
-
+///
+/// Scraper struct
+///
+/// # Fields
+///
+/// - providers: Vec<Providers> - A vector of providers
+/// - credentials: Credentials - The credentials for the scraper
+/// - client: Client - The reqwest client
+/// - base_url: String - The base URL for the API
+/// - run_start: DateTime<chrono::Utc> - The start time of the run
+/// - run_end: Option<DateTime<chrono::Utc>> - The end time of the run
 pub(crate) struct Scraper {
     providers: Vec<Providers>,
-    pub(crate) credentials: Credentials,
+    credentials: Credentials,
     client: Client,
     base_url: String,
     run_start: DateTime<chrono::Utc>,
@@ -68,6 +56,13 @@ impl Scraper {
         }
     }
 
+    ///
+    /// Post the run to the API
+    ///
+    /// # Returns
+    ///
+    ///  Result<(), reqwest::Error> - The result of the post request
+    ///
     async fn post_run(&self) -> Result<(), reqwest::Error> {
         let now = chrono::Utc::now();
         let json_body = json!({
@@ -78,6 +73,14 @@ impl Scraper {
         self.client.post(url).json(&json_body).send().await?;
         Ok(())
     }
+
+    ///
+    /// Fetch the providers from the API
+    ///
+    /// # Returns
+    ///
+    /// Result<Vec<Providers>, Error> - The result of the fetch request for the providers
+    ///
     async fn fetch_providers(&self) -> Result<Vec<Providers>, Error> {
         let url = Url::parse(&format!("{}/scraping_runs/providers", self.base_url)).unwrap();
         let response = self
@@ -101,6 +104,29 @@ impl Scraper {
         }
     }
 
+    ///
+    /// Add a price for a provider to the API
+    ///
+    /// # Arguments
+    ///
+    /// - provider_id: i32 - The ID of the provider
+    /// - price: f64 - The price to add
+    ///
+    /// # Returns
+    ///
+    /// Result<(), reqwest::Error> - The result of the post request
+    ///
+    /// # Errors
+    ///
+    /// If the request fails, an error is returned
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// let scraper = Scraper::new("http://localhost:8000", Credentials::new("client_id", "client_secret"));
+    /// scraper.add_price_for_provider(1, 100.0).await;
+    /// ```
+    ///
     async fn add_price_for_provider(
         &self,
         provider_id: i32,
@@ -131,6 +157,21 @@ impl Scraper {
         Ok(())
     }
 
+    ///
+    /// Sanitize a price string by removing unwanted characters and whitespace and parsing it to a float value
+    ///
+    /// # Arguments
+    ///
+    /// - price_string: String - The price string to sanitize
+    ///
+    /// # Returns
+    ///
+    /// Result<f64, String> - The result of the sanitization
+    ///
+    /// # Errors
+    ///
+    /// If the price string cannot be parsed to a float, an error is returned
+    ///
     fn sanitize_price_string(&self, price_string: String) -> Result<f64, String> {
         // Remove unwanted characters and whitespace
         let sanitized: String = price_string
@@ -145,6 +186,19 @@ impl Scraper {
             .map_err(|e| format!("Failed to parse price: {}", e))
     }
 
+    ///
+    /// Handle the scraping of the providers by fetching the provider data, scraping the price and adding it to the API
+    /// Uses a concurrency limit of 10 to prevent too many concurrent requests to the API
+    /// Also uses an Arc to share the Scraper struct between async blocks
+    ///
+    /// # Returns
+    ///
+    /// Result<(), reqwest::Error> - The result of the scraping operation
+    ///
+    /// # Errors
+    ///
+    /// If the request fails, an error is returned
+    ///
     async fn handle_scraping(&self) -> Result<(), reqwest::Error> {
         let self_arc = Arc::new(self); // Wrap self in Arc
 
@@ -180,6 +234,22 @@ impl Scraper {
         Ok(())
     }
 
+    ///
+    /// Get a provider from the API by ID
+    ///
+    /// # Arguments
+    ///
+    /// - provider: &Providers - The provider to fetch
+    /// - client: &Client - The reqwest client
+    ///
+    /// # Returns
+    ///
+    /// Result<Provider, reqwest::Error> - The result of the fetch request for the provider
+    ///
+    /// # Errors
+    ///
+    /// If the request fails, an error is returned
+    ///
     async fn get_provider(
         &self,
         provider: &Providers,
@@ -195,6 +265,22 @@ impl Scraper {
         Ok(provider)
     }
 
+    ///
+    /// Extract the price from the HTML document using the provided selector, and sanitize the price string
+    ///
+    /// # Arguments
+    ///
+    /// - provider: Provider - The provider to extract the price for
+    /// - document: Html - The HTML document to extract the price from
+    ///
+    /// # Returns
+    ///
+    /// Result<(), reqwest::Error> - The result of the price extraction
+    ///
+    /// # Errors
+    ///
+    /// If the price string cannot be sanitized, an error is returned
+    ///
     async fn extract_price(&self, provider: Provider, document: Html, selector: &Selector) {
         for element in document.select(selector) {
             let price_string = element.text().collect::<String>();
@@ -211,6 +297,13 @@ impl Scraper {
         println!("No price found for provider: {}", provider.name);
     }
 
+    ///
+    /// Get a token from the API
+    ///
+    /// # Returns
+    ///
+    /// Result<Token, reqwest::Error> - The result of the token request
+    ///
     async fn get_token(&mut self) -> Result<Token, reqwest::Error> {
         let url = Url::parse(&format!("{}{}", self.base_url, "/auth/login")).unwrap();
         let response = self
@@ -228,6 +321,12 @@ impl Scraper {
         Ok(response)
     }
 
+    ///
+    /// Configure the client with the necessary headers
+    ///
+    /// # Returns
+    ///
+    /// Result<(), Box<dyn std::error::Error>> - The result of the configuration
     async fn configure_client(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         let mut headers = HeaderMap::new();
         let auth_value = format!(
@@ -240,9 +339,9 @@ impl Scraper {
         Ok(())
     }
 
-    pub(crate) async fn scrape(&mut self) -> Result<(), reqwest::Error> {
+    pub(crate) async fn run(&mut self) -> Result<(), reqwest::Error> {
         self.run_start = chrono::Utc::now();
-        self.credentials.token = self.get_token().await.unwrap();
+        self.credentials.token = self.get_token().await?;
         self.configure_client().await.unwrap();
         self.providers = self.fetch_providers().await.unwrap();
         self.handle_scraping().await?;
